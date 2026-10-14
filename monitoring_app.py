@@ -2158,6 +2158,37 @@ div[class*="st-key-post_select_"] button p {
 </style>
 """, unsafe_allow_html=True)
 
+
+st.markdown("""
+<style>
+@media (min-width: 900px) {
+  html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"] {
+    height: 100vh !important;
+    overflow: hidden !important;
+  }
+  section[data-testid="stMain"] { height: 100vh !important; overflow: hidden !important; }
+  section[data-testid="stMain"] > div[data-testid="stMainBlockContainer"] {
+    height: 100vh !important;
+    overflow: hidden !important;
+  }
+  div.st-key-category_scroll [data-testid="stVerticalScrollContainer"],
+  div.st-key-posts_scroll [data-testid="stVerticalScrollContainer"],
+  div.st-key-details_scroll [data-testid="stVerticalScrollContainer"] {
+    height: clamp(220px, calc(100vh - 350px), 900px) !important;
+    max-height: calc(100vh - 350px) !important;
+    overflow-y: auto !important;
+  }
+}
+@media (max-width: 899px) {
+  div.st-key-category_scroll [data-testid="stVerticalScrollContainer"],
+  div.st-key-posts_scroll [data-testid="stVerticalScrollContainer"],
+  div.st-key-details_scroll [data-testid="stVerticalScrollContainer"] {
+    max-height: 55vh !important;
+  }
+}
+</style>
+""", unsafe_allow_html=True)
+
 category_col, left_col, right_col = st.columns([0.78, 1.65, 1.65], gap="small")
 
 if "selected_post_id" not in st.session_state:
@@ -2165,16 +2196,16 @@ if "selected_post_id" not in st.session_state:
 
 with category_col:
     st.markdown("#### Категории")
-    for category_key, category_icon, category_title, category_count in CATEGORY_CHOICES:
-        if st.button(
-            f"{category_icon} {category_title} · {category_count}",
-            key=f"category_{category_key}",
-            type="primary" if selected_filter == category_key else "secondary",
-            use_container_width=True,
-        ):
-            st.session_state["message_filter"] = category_key
-            st.rerun()
-
+    with st.container(height=480, border=False, key="category_scroll"):
+        for category_key, category_icon, category_title, category_count in CATEGORY_CHOICES:
+            if st.button(
+                f"{category_icon} {category_title} · {category_count}",
+                key=f"category_{category_key}",
+                type="primary" if selected_filter == category_key else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state["message_filter"] = category_key
+                st.rerun()
 with left_col:
     st.markdown("#### Публикации")
     section_posts = posts
@@ -2184,7 +2215,7 @@ with left_col:
         st.session_state["selected_post_id"] = visible_ids[0]
 
     st.caption(f"Найдено публикаций: {len(section_posts)}")
-    with st.container(height=650, border=False):
+    with st.container(height=480, border=False, key="posts_scroll"):
         if visible_posts.empty:
             st.info("В этом разделе публикаций нет.")
         for i, post in visible_posts.iterrows():
@@ -2215,47 +2246,48 @@ with left_col:
 
 with right_col:
     st.markdown("#### Публикация и комментарии")
+    with st.container(height=480, border=False, key="details_scroll"):
 
-    selected_id = st.session_state["selected_post_id"]
+        selected_id = st.session_state["selected_post_id"]
 
-    selected_rows = visible_posts[
-        visible_posts["post_id"].astype(str) == selected_id
-    ]
+        selected_rows = visible_posts[
+            visible_posts["post_id"].astype(str) == selected_id
+        ]
 
 
-    if not selected_rows.empty:
-        post = selected_rows.iloc[0]
+        if not selected_rows.empty:
+            post = selected_rows.iloc[0]
 
-        post_comments = all_comments[
-            all_comments["post_id"].astype(str) == selected_id
-        ].copy()
+            post_comments = all_comments[
+                all_comments["post_id"].astype(str) == selected_id
+            ].copy()
 
-        with st.container(border=True):
-            st.caption("Threads · Публикация")
-            st.write(post["text"])
+            with st.container(border=True):
+                st.caption("Threads · Публикация")
+                st.write(post["text"])
 
-            url = str(post.get("url", "") or "").strip()
-            if url.startswith(("https://", "http://")):
-                st.link_button(
-                    "Открыть в Threads",
-                    url,
-                    use_container_width=True,
-                )
+                url = str(post.get("url", "") or "").strip()
+                if url.startswith(("https://", "http://")):
+                    st.link_button(
+                        "Открыть в Threads",
+                        url,
+                        use_container_width=True,
+                    )
 
-        st.markdown(f"**Комментарии ({len(post_comments)})**")
+            st.markdown(f"**Комментарии ({len(post_comments)})**")
 
-        with st.container(height=500, border=False):
-            if post_comments.empty:
-                st.info("Подходящих комментариев нет.")
-            else:
-                for _, comment in post_comments.iterrows():
-                    with st.container(border=True):
-                        st.write(comment["text"])
-                        st.caption(
-                            f"Тип: {comment.get('msg_type', 'Не определён')}"
-                        )
-    else:
-        st.info("Выберите публикацию слева.")
+            with st.container(border=False):
+                if post_comments.empty:
+                    st.info("Подходящих комментариев нет.")
+                else:
+                    for _, comment in post_comments.iterrows():
+                        with st.container(border=True):
+                            st.write(comment["text"])
+                            st.caption(
+                                f"Тип: {comment.get('msg_type', 'Не определён')}"
+                            )
+        else:
+            st.info("Выберите публикацию слева.")
 
 if posts.empty:
     st.info("Публикаций по выбранным условиям не найдено.")
@@ -2263,30 +2295,32 @@ if posts.empty:
 if len(posts) > 200:
     st.info("Показаны первые 200 публикаций.")
 
-st.markdown("#### На что чаще всего обращают внимание")
+with st.sidebar:
+    with st.expander("Темы и выгрузка Excel", expanded=False):
+        st.markdown("#### На что чаще всего обращают внимание")
 
-if category_counts.empty:
-    st.caption("Популярные темы пока не определены.")
-else:
-    st.markdown(
-        " · ".join(
-            f"**{category}** — {int(count)}"
-            for category, count in category_counts.head(5).items()
+        if category_counts.empty:
+            st.caption("Популярные темы пока не определены.")
+        else:
+            st.markdown(
+                " · ".join(
+                    f"**{category}** — {int(count)}"
+                    for category, count in category_counts.head(5).items()
+                )
+            )
+
+        st.subheader("Скачать данные")
+        report_sheets = {
+            "Сводка": pd.DataFrame({"Показатель": ["Всего сообщений", "Жалобы и проблемы", "Негативные сообщения", "Благодарности"],
+                                     "Значение": [total, problems, negative, positive]}),
+            "Частые темы": category_counts.rename_axis("Тема").reset_index(name="Сообщений"),
+            "Сообщения": messages_export(ordered),
+            "Качество данных": pd.DataFrame({"Показатель": list(quality), "Значение": list(quality.values())}),
+        }
+        excel_data = build_excel(report_sheets)
+        st.download_button(
+            "Скачать результаты в Excel",
+            data=excel_data,
+            file_name="медиамониторинг_Шымкент.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-    )
-
-st.subheader("Скачать данные")
-report_sheets = {
-    "Сводка": pd.DataFrame({"Показатель": ["Всего сообщений", "Жалобы и проблемы", "Негативные сообщения", "Благодарности"],
-                             "Значение": [total, problems, negative, positive]}),
-    "Частые темы": category_counts.rename_axis("Тема").reset_index(name="Сообщений"),
-    "Сообщения": messages_export(ordered),
-    "Качество данных": pd.DataFrame({"Показатель": list(quality), "Значение": list(quality.values())}),
-}
-excel_data = build_excel(report_sheets)
-st.download_button(
-    "Скачать результаты в Excel",
-    data=excel_data,
-    file_name="медиамониторинг_Шымкент.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
