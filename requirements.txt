@@ -2,4 +2,6 @@ streamlit
 pandas
 openpyxl
 requests
+folium
+streamlit-folium
 google-genai
