@@ -1490,19 +1490,29 @@ def fetch_own_threads(token, since, until, max_pages, with_replies):
 
 
 def fetch_telegram_public_channels(api_id, api_hash, channels, post_limit=40, comments_limit=40):
-    """Read public posts and accessible discussion replies using an authorized local Telethon session."""
+    """Read public Telegram channels with a session from Secrets or local development."""
     import asyncio
     from pathlib import Path
     from telethon import TelegramClient
+    from telethon.sessions import StringSession
     from telethon.errors import RPCError
 
-    session = Path(__file__).resolve().parent / ".streamlit" / "shymkent_telegram_session"
-    if not session.with_suffix(".session").exists():
-        return pd.DataFrame(), ["Telegram: не найдена авторизованная сессия. Сначала войдите через telegram_qr_login.py."]
+    try:
+        session_string = st.secrets.get("TELEGRAM_SESSION_STRING", "")
+    except Exception:
+        session_string = ""
+    session_string = session_string or os.environ.get("TELEGRAM_SESSION_STRING", "")
+    local_session = Path(__file__).resolve().parent / ".streamlit" / "shymkent_telegram_session"
+    if session_string:
+        session = StringSession(session_string)
+    elif local_session.with_suffix(".session").exists():
+        session = str(local_session)
+    else:
+        return pd.DataFrame(), ["Telegram: добавьте TELEGRAM_SESSION_STRING в Streamlit Cloud → Settings → Secrets."]
 
     async def collect():
         rows, errors = [], []
-        client = TelegramClient(str(session), int(api_id), str(api_hash))
+        client = TelegramClient(session, int(api_id), str(api_hash))
         await client.connect()
         try:
             if not await client.is_user_authorized():
@@ -1692,7 +1702,7 @@ with st.sidebar:
         telegram_channels_text = st.text_area(
             "Публичные Telegram-каналы (по одному на строке)",
             value="https://t.me/shymkentonline", height=90,
-            help="Используется локальная авторизованная сессия Telethon."
+            help="В Streamlit Cloud используется TELEGRAM_SESSION_STRING из Secrets; локально поддерживается файл сессии."
         )
     # Лимиты загрузки заданы внутри приложения, без дополнительных полей в панели.
     telegram_post_limit = 30
@@ -1886,7 +1896,7 @@ if mode != "Файл Excel/CSV":
                 tg_id = tg_id or os.environ.get("TELEGRAM_API_ID")
                 tg_hash = tg_hash or os.environ.get("TELEGRAM_API_HASH")
                 if not tg_id or not tg_hash:
-                    st.warning("Для Telegram добавьте TELEGRAM_API_ID и TELEGRAM_API_HASH в .streamlit/secrets.toml")
+                    st.warning("Для Telegram добавьте TELEGRAM_API_ID и TELEGRAM_API_HASH в Streamlit Cloud → Settings → Secrets")
                 else:
                     tg_channels = [line.strip() for line in telegram_channels_text.splitlines() if line.strip()]
                     tg_df, tg_errors = fetch_telegram_public_channels(
