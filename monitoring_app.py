@@ -2485,3 +2485,44 @@ with st.sidebar:
             file_name="медиамониторинг_Шымкент.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+st.markdown("""
+<style>
+/* Поля ввода и выпадающие списки */
+div[data-baseweb="select"] > div,
+div[data-baseweb="input"] > div,
+div[data-baseweb="base-input"],
+div[data-baseweb="textarea"] > div {
+    background-color: #17152e !important;
+    color: #ffffff !important;
+}
+
+/* Текст в полях */
+div[data-baseweb="select"] *,
+div[data-baseweb="input"] input,
+div[data-baseweb="textarea"] textarea {
+    color: #ffffff !important;
+}
+
+/* Календарь */
+div[data-baseweb="popover"],
+div[data-baseweb="popover"] > div,
+div[role="listbox"] {
+    background-color: #17152e !important;
+    color: #ffffff !important;
+}
+
+/* Названия и подписи элементов */
+[data-testid="stWidgetLabel"],
+[data-testid="stWidgetLabel"] p,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] label p {
+    color: #ffffff !important;
+}
+
+/* Радиокнопки */
+div[role="radiogroup"] label,
+div[role="radiogroup"] label p {
+    color: #ffffff !important;
+}
+</style>
+""", unsafe_allow_html=True)
