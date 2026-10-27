@@ -2408,49 +2408,24 @@ with right_col:
                 "Благодарности": "Благодарность",
                 "Информация": "Информация",
             }
-            # Comment filters: dark background and readable active/inactive states
-            st.markdown("""
-            <style>
-            div[data-testid="stSegmentedControl"] button,
-            div[data-testid="stSegmentedControl"] [role="radio"],
-            div[data-testid="stSegmentedControl"] [role="button"] {
-                background: #211b40 !important;
-                color: #eee9ff !important;
-                border: 1px solid #514578 !important;
-                box-shadow: none !important;
-            }
-            div[data-testid="stSegmentedControl"] button *,
-            div[data-testid="stSegmentedControl"] [role="radio"] *,
-            div[data-testid="stSegmentedControl"] [role="button"] * {
-                color: inherit !important;
-            }
-            div[data-testid="stSegmentedControl"] button[aria-checked="true"],
-            div[data-testid="stSegmentedControl"] button[aria-pressed="true"],
-            div[data-testid="stSegmentedControl"] [role="radio"][aria-checked="true"],
-            div[data-testid="stSegmentedControl"] [data-selected="true"] {
-                background: #5b35c9 !important;
-                color: #ffffff !important;
-                border-color: #a18aff !important;
-            }
-            div[data-testid="stSegmentedControl"] button:hover,
-            div[data-testid="stSegmentedControl"] [role="radio"]:hover {
-                background: #35265f !important;
-                color: #ffffff !important;
-            }
-            div[data-testid="stSegmentedControl"] button:focus-visible,
-            div[data-testid="stSegmentedControl"] [role="radio"]:focus-visible {
-                outline: 2px solid #aa91ff !important;
-                outline-offset: 1px !important;
-            }
-            </style>
-            """, unsafe_allow_html=True)
-            selected_comment_tab = st.segmented_control(
-                "Тип комментариев",
-                options=list(comment_labels),
-                default="Все",
-                key="comment_type_filter_tabs",
-                label_visibility="collapsed",
-            ) or "Все"
+            # Обычные кнопки вместо segmented_control: без системной красной/белой подсветки.
+            if "comment_type_filter_choice" not in st.session_state:
+                st.session_state["comment_type_filter_choice"] = "Все"
+            comment_options = list(comment_labels)
+            for start in (0, 3):
+                cols = st.columns(3, gap="small")
+                for col, option in zip(cols, comment_options[start:start + 3]):
+                    with col:
+                        is_selected = st.session_state["comment_type_filter_choice"] == option
+                        if st.button(
+                            option,
+                            key=f"comment_filter_btn_{option}",
+                            type="primary" if is_selected else "secondary",
+                            use_container_width=True,
+                        ):
+                            st.session_state["comment_type_filter_choice"] = option
+                            st.rerun()
+            selected_comment_tab = st.session_state["comment_type_filter_choice"]
             comment_type = comment_labels[selected_comment_tab]
             shown_comments = (
                 post_comments if comment_type == "Все комментарии"
