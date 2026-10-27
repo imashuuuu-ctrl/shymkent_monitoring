@@ -1672,6 +1672,98 @@ div[data-testid="stVerticalScrollContainer"], div[data-testid="stContainer"] { b
 </style>
 """, unsafe_allow_html=True)
 
+# Единая тёмная тема для Streamlit Cloud (все разделы)
+st.markdown("""
+<style>
+:root { color-scheme: dark; }
+html, body, [data-testid="stAppViewContainer"], .stApp {
+  color: #f2efff !important;
+}
+[data-testid="stHeader"], [data-testid="stToolbar"],
+[data-testid="stDecoration"], [data-testid="stStatusWidget"] {
+  background: #0d1028 !important;
+  color: #f2efff !important;
+}
+[data-testid="stHeader"] button, [data-testid="stToolbar"] button {
+  color: #f2efff !important;
+}
+/* Подписи, верхняя навигация, радио и чекбоксы */
+[data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] *,
+[data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li,
+[data-testid="stRadio"] label, [data-testid="stRadio"] label *,
+[data-testid="stCheckbox"] label, [data-testid="stCheckbox"] label *,
+[data-testid="stSidebar"] label, [data-testid="stSidebar"] label * {
+  color: #e9e4fb !important;
+}
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] * {
+  color: #aeb6d0 !important;
+}
+/* Поля ввода, select/multiselect, даты и числа */
+[data-baseweb="select"] > div,
+[data-baseweb="input"] > div,
+[data-baseweb="base-input"],
+[data-baseweb="textarea"] > div,
+[data-testid="stDateInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stTextInput"] input,
+[data-testid="stTextArea"] textarea {
+  background: #191b3a !important;
+  color: #f8f6ff !important;
+  border-color: #514778 !important;
+  -webkit-text-fill-color: #f8f6ff !important;
+}
+[data-baseweb="select"] input, [data-baseweb="select"] span,
+[data-baseweb="select"] div, [data-baseweb="select"] svg,
+[data-baseweb="input"] input, [data-baseweb="input"] svg,
+[data-baseweb="textarea"] textarea,
+[data-testid="stDateInput"] svg, [data-testid="stNumberInput"] button {
+  color: #f8f6ff !important;
+  fill: currentColor;
+}
+[data-baseweb="select"] input::placeholder,
+[data-baseweb="input"] input::placeholder,
+[data-baseweb="textarea"] textarea::placeholder { color: #aeb6d0 !important; }
+/* Всплывающие списки и календарь (порталы вне боковой панели) */
+[data-baseweb="popover"], [data-baseweb="popover"] > div,
+[data-baseweb="menu"], [role="listbox"], [role="option"],
+[data-baseweb="calendar"], [data-baseweb="calendar"] * {
+  background-color: #191b3a !important;
+  color: #f8f6ff !important;
+}
+[role="option"]:hover, [role="option"][aria-selected="true"] {
+  background-color: #3c2c7c !important;
+}
+/* Табы, переключатели и раскрывающиеся блоки */
+[data-testid="stSegmentedControl"] button,
+[data-testid="stTabs"] button, [data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary * { color: #f8f6ff !important; }
+[data-testid="stExpander"], [data-testid="stVerticalBlockBorderWrapper"] {
+  border-color: #3b4165 !important;
+}
+/* Таблицы и сообщения */
+[data-testid="stDataFrame"], [data-testid="stTable"],
+[data-testid="stAlert"] { color: #f8f6ff !important; }
+[data-testid="stMetricLabel"] *, [data-testid="stMetricValue"] * {
+  color: #f8f6ff !important;
+}
+/* Сохраняем контраст и красные метки выбранных фильтров */
+[data-baseweb="tag"] { background: #ed465c !important; }
+[data-baseweb="tag"] * { color: white !important; }
+/* Кнопки и ссылки */
+.stButton > button, .stDownloadButton > button, .stLinkButton > a {
+  color: #fff !important;
+  background: #211d46 !important;
+  border: 1px solid #6557a0 !important;
+}
+.stButton > button:hover, .stDownloadButton > button:hover,
+.stLinkButton > a:hover { background: #382879 !important; }
+.stButton > button[kind="primary"] {
+  background: #5b30d6 !important;
+  border-color: #9570fa !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 with st.sidebar:
     st.markdown("""
     <div style="padding:10px 2px 16px;border-bottom:1px solid #30415b;margin-bottom:16px;">
@@ -2485,44 +2577,3 @@ with st.sidebar:
             file_name="медиамониторинг_Шымкент.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-st.markdown("""
-<style>
-/* Поля ввода и выпадающие списки */
-div[data-baseweb="select"] > div,
-div[data-baseweb="input"] > div,
-div[data-baseweb="base-input"],
-div[data-baseweb="textarea"] > div {
-    background-color: #17152e !important;
-    color: #ffffff !important;
-}
-
-/* Текст в полях */
-div[data-baseweb="select"] *,
-div[data-baseweb="input"] input,
-div[data-baseweb="textarea"] textarea {
-    color: #ffffff !important;
-}
-
-/* Календарь */
-div[data-baseweb="popover"],
-div[data-baseweb="popover"] > div,
-div[role="listbox"] {
-    background-color: #17152e !important;
-    color: #ffffff !important;
-}
-
-/* Названия и подписи элементов */
-[data-testid="stWidgetLabel"],
-[data-testid="stWidgetLabel"] p,
-[data-testid="stSidebar"] label,
-[data-testid="stSidebar"] label p {
-    color: #ffffff !important;
-}
-
-/* Радиокнопки */
-div[role="radiogroup"] label,
-div[role="radiogroup"] label p {
-    color: #ffffff !important;
-}
-</style>
-""", unsafe_allow_html=True)
