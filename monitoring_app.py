@@ -1827,6 +1827,53 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Финальные стили календаря и полей ввода — поверх старых правил.
+st.markdown("""
+<style>
+/* Контрастный календарь BaseWeb: не красим все дочерние элементы одинаково. */
+[data-baseweb="calendar"], [data-baseweb="calendar"] > div,
+[data-baseweb="calendar"] [role="grid"] {
+  background-color:#201b3e !important; color:#f6f1ff !important;
+}
+[data-baseweb="calendar"] button,
+[data-baseweb="calendar"] [role="gridcell"] button,
+[data-baseweb="calendar"] [role="gridcell"] > div {
+  color:#f6f1ff !important;
+  -webkit-text-fill-color:#f6f1ff !important;
+  opacity:1 !important;
+}
+[data-baseweb="calendar"] button:disabled,
+[data-baseweb="calendar"] [aria-disabled="true"] {
+  color:#88809f !important;
+  -webkit-text-fill-color:#88809f !important;
+  opacity:.65 !important;
+}
+[data-baseweb="calendar"] [aria-selected="true"],
+[data-baseweb="calendar"] button[aria-selected="true"] {
+  background-color:#6337d3 !important;
+  color:#fff !important;
+}
+[data-baseweb="calendar"] button:hover:not(:disabled) {
+  background-color:#41316d !important;
+}
+/* Восстановление тёмного фона для всех обычных выпадающих списков. */
+[data-baseweb="select"] > div,
+[data-baseweb="input"] > div,
+[data-testid="stDateInput"] [data-baseweb="base-input"],
+[data-testid="stSelectbox"] [data-baseweb="select"] > div {
+  background-color:#211d40 !important;
+  color:#fff !important;
+  border-color:#625487 !important;
+}
+[data-baseweb="select"] [role="combobox"],
+[data-baseweb="select"] [role="combobox"] *,
+[data-testid="stDateInput"] input {
+  color:#fff !important;
+  -webkit-text-fill-color:#fff !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 with st.sidebar:
     st.markdown("""
     <div style="padding:10px 2px 16px;border-bottom:1px solid #30415b;margin-bottom:16px;">
