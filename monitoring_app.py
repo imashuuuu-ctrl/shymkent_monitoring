@@ -1992,16 +1992,6 @@ if data.empty:
 
 df = data.copy()
 
-# Отдельный раздел карты: обычный медиамониторинг остаётся без изменений.
-page_choice = st.radio(
-    "Раздел сайта", ["📋 Медиамониторинг", "🗺️ Карта проблем"],
-    horizontal=True, label_visibility="collapsed", key="main_section_selector",
-)
-if page_choice == "🗺️ Карта проблем":
-    from shymkent_problem_map import render_problem_map
-    render_problem_map(df)
-    st.stop()
-
 
 st.markdown("""<style>
 .block-container {max-width: 1720px !important; padding-top: .9rem !important;}
