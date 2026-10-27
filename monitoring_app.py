@@ -1487,6 +1487,77 @@ def fetch_own_threads(token, since, until, max_pages, with_replies):
     return pd.DataFrame(rows), errors
 
 
+
+
+def fetch_telegram_public_channels(api_id, api_hash, channels, post_limit=40, comments_limit=40):
+    """Read public posts and accessible discussion replies using an authorized local Telethon session."""
+    import asyncio
+    from pathlib import Path
+    from telethon import TelegramClient
+    from telethon.errors import RPCError
+
+    session = Path(__file__).resolve().parent / ".streamlit" / "shymkent_telegram_session"
+    if not session.with_suffix(".session").exists():
+        return pd.DataFrame(), ["Telegram: не найдена авторизованная сессия. Сначала войдите через telegram_qr_login.py."]
+
+    async def collect():
+        rows, errors = [], []
+        client = TelegramClient(str(session), int(api_id), str(api_hash))
+        await client.connect()
+        try:
+            if not await client.is_user_authorized():
+                return [], ["Telegram: сессия не авторизована. Повторите вход через QR."]
+            for channel in channels:
+                channel = channel.strip()
+                if not channel:
+                    continue
+                try:
+                    entity = await client.get_entity(channel)
+                    username = getattr(entity, "username", None)
+                    chat_id = str(entity.id)
+                    async for post in client.iter_messages(entity, limit=int(post_limit)):
+                        post_text = post.message or ""
+                        if not post_text.strip():
+                            continue
+                        parent = f"tg:{chat_id}:{post.id}"
+                        post_link = f"https://t.me/{username}/{post.id}" if username else ""
+                        rows.append({
+                            "ID": parent, "ID публикации": parent,
+                            "Дата": post.date.isoformat(), "Источник": "Telegram",
+                            "Тип записи": "Публикация", "Автор": getattr(entity, "title", channel),
+                            "Текст": post_text, "Ссылка": post_link,
+                        })
+                        if not (getattr(post, "replies", None) and post.replies.replies):
+                            continue
+                        try:
+                            async for comment in client.iter_messages(entity, reply_to=post.id, limit=int(comments_limit)):
+                                comment_text = comment.message or ""
+                                if not comment_text.strip():
+                                    continue
+                                sender = await comment.get_sender()
+                                author = getattr(sender, "username", None) or getattr(sender, "first_name", None) or "Участник Telegram"
+                                rows.append({
+                                    "ID": f"tg:comment:{chat_id}:{post.id}:{comment.id}",
+                                    "ID публикации": parent, "Дата": comment.date.isoformat(),
+                                    "Источник": "Telegram", "Тип записи": "Комментарий",
+                                    "Автор": author, "Текст": comment_text,
+                                    "Ссылка": post_link,
+                                })
+                        except (RPCError, ValueError) as exc:
+                            errors.append(f"Комментарии {channel}, пост {post.id}: {type(exc).__name__}: {exc}")
+                except (RPCError, ValueError) as exc:
+                    errors.append(f"Канал {channel}: {type(exc).__name__}: {exc}")
+            return rows, errors
+        finally:
+            await client.disconnect()
+
+    try:
+        rows, errors = asyncio.run(collect())
+        return pd.DataFrame(rows), errors
+    except Exception as exc:
+        return pd.DataFrame(), [f"Telegram: {type(exc).__name__}: {exc}"]
+
+
 st.set_page_config(page_title="Медиамониторинг города", layout="wide")
 
 st.markdown("""
@@ -1611,6 +1682,21 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     mode = "Мои публикации (Threads API)"
+    source_choice = st.selectbox(
+        "Источник данных", ["Threads", "Telegram", "Все источники"],
+        help="Можно просматривать отдельно Threads, Telegram или оба источника вместе."
+    )
+
+    telegram_channels_text = "https://t.me/shymkentonline"
+    if source_choice in ("Telegram", "Все источники"):
+        telegram_channels_text = st.text_area(
+            "Публичные Telegram-каналы (по одному на строке)",
+            value="https://t.me/shymkentonline", height=90,
+            help="Используется локальная авторизованная сессия Telethon."
+        )
+    # Лимиты загрузки заданы внутри приложения, без дополнительных полей в панели.
+    telegram_post_limit = 30
+    telegram_comments_limit = 30
 
     uploaded = None
     load_btn = False
@@ -1656,6 +1742,11 @@ with st.sidebar:
         else:      
 
             
+            brand_icon = ("https://cdn.simpleicons.org/telegram/229ED9" if source_choice == "Telegram"
+                          else "https://cdn.simpleicons.org/threads/000000")
+            brand_title = ("Telegram" if source_choice == "Telegram"
+                           else "Threads + Telegram" if source_choice == "Все источники"
+                           else "Threads API")
             st.markdown("""
             <style>
             .threads-brand {
@@ -1714,16 +1805,16 @@ with st.sidebar:
     
             <div class="threads-brand">
                 <div class="threads-logo">
-                    <img src="https://cdn.simpleicons.org/threads/000000">
+                    <img src="__SOURCE_ICON__">
                 </div>
                 <div>
-                    <div class="threads-name">Threads API</div>
+                    <div class="threads-name">__SOURCE_TITLE__</div>
                     <div class="threads-description">
                         Мониторинг публикаций
                     </div>
                 </div>
             </div>
-            """, unsafe_allow_html=True)
+            """.replace("__SOURCE_ICON__", brand_icon).replace("__SOURCE_TITLE__", brand_title), unsafe_allow_html=True)
 
         with_replies = True
 
@@ -1749,7 +1840,7 @@ with st.sidebar:
         )
 
         load_btn = st.button(
-            "↻ Загрузить из Threads",
+            "↻ Загрузить данные",
             use_container_width=True,
             type="primary"
         )
@@ -1758,9 +1849,8 @@ with st.sidebar:
 if mode != "Файл Excel/CSV":
 
     if load_btn:
-        if not token:
-            st.error("Не задан THREADS_TOKEN (.streamlit/secrets.toml или переменная окружения).")
-            st.stop()
+        if source_choice in ("Threads", "Все источники") and not token:
+            st.warning("THREADS_TOKEN не задан — Threads загрузить нельзя.")
 
         since_val = d_from.isoformat()
         until_val = None if d_to >= date.today() else (d_to + timedelta(days=1)).isoformat()
@@ -1769,37 +1859,65 @@ if mode != "Файл Excel/CSV":
         loading_screen.markdown("""
         <div style="background:linear-gradient(135deg,#132642,#0c192d);border:1px solid #2b4566;border-radius:18px;padding:60px 24px;text-align:center;max-width:850px;margin:24px auto;color:#e8eef8;">
           <div style="font-size:38px;color:#70b6ff;margin-bottom:14px;">◌</div>
-          <div style="font-size:24px;font-weight:750;margin-bottom:12px;">Загружаем данные Threads</div>
-          <div style="font-size:15px;color:#b5c5db;line-height:1.7;">Получаем публикации и комментарии<br>Подготавливаем аналитику обращений жителей Шымкента</div>
+          <div style="font-size:24px;font-weight:750;margin-bottom:12px;">Загружаем данные источников</div>
+          <div style="font-size:15px;color:#b5c5db;line-height:1.7;">Получаем доступные сообщения<br>Подготавливаем аналитику обращений жителей Шымкента</div>
           <div style="font-size:13px;color:#80baff;margin-top:22px;">Пожалуйста, подождите…</div>
         </div>
         """, unsafe_allow_html=True)
 
         try:
-            if mode == "Поиск по словам (Threads API)":
-                qs = tuple(q.strip() for q in queries_text.splitlines() if q.strip())
-                if not qs:
-                    st.error("Укажите хотя бы одно ключевое слово.")
-                    st.stop()
-                api_df, api_errors = fetch_threads(token, qs, search_type, since_val,
-                                                   until_val, int(max_pages))
-            else:
-                api_df, api_errors = fetch_own_threads(token, since_val, until_val,
-                                                       int(max_pages), with_replies)
+            if source_choice in ("Threads", "Все источники") and token:
+                if mode == "Поиск по словам (Threads API)":
+                    qs = tuple(q.strip() for q in queries_text.splitlines() if q.strip())
+                    threads_df, threads_errors = fetch_threads(token, qs, search_type, since_val,
+                                                               until_val, int(max_pages))
+                else:
+                    threads_df, threads_errors = fetch_own_threads(token, since_val, until_val,
+                                                                   int(max_pages), with_replies)
+                st.session_state["threads_df"] = threads_df
+                for err in threads_errors:
+                    st.warning(err)
+            if source_choice in ("Telegram", "Все источники"):
+                try:
+                    tg_id = st.secrets.get("TELEGRAM_API_ID")
+                    tg_hash = st.secrets.get("TELEGRAM_API_HASH")
+                except Exception:
+                    tg_id, tg_hash = None, None
+                tg_id = tg_id or os.environ.get("TELEGRAM_API_ID")
+                tg_hash = tg_hash or os.environ.get("TELEGRAM_API_HASH")
+                if not tg_id or not tg_hash:
+                    st.warning("Для Telegram добавьте TELEGRAM_API_ID и TELEGRAM_API_HASH в .streamlit/secrets.toml")
+                else:
+                    tg_channels = [line.strip() for line in telegram_channels_text.splitlines() if line.strip()]
+                    tg_df, tg_errors = fetch_telegram_public_channels(
+                        tg_id, tg_hash, tg_channels, int(telegram_post_limit), int(telegram_comments_limit)
+                    )
+                    st.session_state["telegram_df"] = tg_df
+                    for err in tg_errors:
+                        st.warning(err)
         finally:
             loading_screen.empty()
 
-        for err in api_errors:
-            st.warning(err)
-        st.session_state["api_df"] = api_df
-
-    api_df = st.session_state.get("api_df")
+    source_frames = []
+    if source_choice in ("Threads", "Все источники"):
+        source_frames.append(st.session_state.get("threads_df", pd.DataFrame()))
+    if source_choice in ("Telegram", "Все источники"):
+        source_frames.append(st.session_state.get("telegram_df", pd.DataFrame()))
+    source_frames = [frame for frame in source_frames if frame is not None and not frame.empty]
+    api_df = pd.concat(source_frames, ignore_index=True) if source_frames else None
+    if api_df is not None:
+        api_df = api_df.drop_duplicates(subset=["ID"], keep="last")
+        if "Дата" in api_df.columns:
+            dates = pd.to_datetime(api_df["Дата"], errors="coerce", utc=True)
+            start = pd.Timestamp(d_from).tz_localize("UTC")
+            end = (pd.Timestamp(d_to) + pd.Timedelta(days=1)).tz_localize("UTC")
+            api_df = api_df[(dates >= start) & (dates < end)].copy()
     if api_df is None:
         st.markdown("""
         <div style="background:linear-gradient(135deg,#132642,#0c192d);border:1px solid #2b4566;border-radius:18px;padding:58px 24px;text-align:center;max-width:850px;margin:24px auto;color:#e8eef8;">
           <div style="font-size:30px;margin-bottom:16px;">◎</div>
-          <div style="font-size:24px;font-weight:750;margin-bottom:12px;">Медиамониторинг Threads</div>
-          <div style="font-size:15px;color:#b5c5db;line-height:1.7;">Выберите период и нажмите «Загрузить из Threads»<br>в левой панели, чтобы увидеть обращения и аналитику.</div>
+          <div style="font-size:24px;font-weight:750;margin-bottom:12px;">Медиамониторинг города</div>
+          <div style="font-size:15px;color:#b5c5db;line-height:1.7;">Выберите источник, период и нажмите «Загрузить данные»<br>в левой панели, чтобы увидеть обращения и аналитику.</div>
         </div>
         """, unsafe_allow_html=True)
         st.stop()
@@ -1807,7 +1925,7 @@ if mode != "Файл Excel/CSV":
         st.info("Публикации за выбранный период не найдены. Попробуйте изменить период и загрузить данные снова.")
         st.stop()
 
-    sheets = {"Threads API": api_df}
+    sheets = {"Источники": api_df}
 
 else:
 
@@ -1873,6 +1991,24 @@ if data.empty:
 
 
 df = data.copy()
+
+# Отдельный раздел карты: обычный медиамониторинг остаётся без изменений.
+page_choice = st.radio(
+    "Раздел сайта", ["📋 Медиамониторинг", "🗺️ Карта проблем", "📊 Аналитика по районам", "🤖 ИИ-помощник"],
+    horizontal=True, label_visibility="collapsed", key="main_section_selector",
+)
+if page_choice == "🗺️ Карта проблем":
+    from shymkent_problem_map import render_problem_map
+    render_problem_map(df)
+    st.stop()
+if page_choice == "📊 Аналитика по районам":
+    from shymkent_district_ai import render_districts
+    render_districts(df)
+    st.stop()
+if page_choice == "🤖 ИИ-помощник":
+    from shymkent_district_ai import render_assistant
+    render_assistant(df)
+    st.stop()
 
 
 st.markdown("""<style>
@@ -2018,27 +2154,34 @@ def infer_work_status(post_id):
 
 posts["work_status"] = posts["post_id"].astype(str).map(infer_work_status)
 
+# Категории слева относятся ТОЛЬКО к самим публикациям.
+# Комментарии классифицируются и фильтруются отдельно в правой колонке.
+filtered_publications = f[f["record_type"].eq("Публикация")].copy()
+
 CATEGORY_CHOICES = [
-    ("all", "💬", "Все сообщения", total),
-    ("problems", "🚨", "Жалобы", problems),
-    ("thanks", "💚", "Благодарности", thanks_count),
-    ("questions", "❔", "Вопросы", int(type_counts.get("Вопрос", 0))),
-    ("suggestions", "💡", "Предложения", int(type_counts.get("Предложение", 0))),
-    ("information", "ℹ️", "Информация", int(type_counts.get("Информация", 0))),
+    ("all", "📝", "Все публикации", len(filtered_publications)),
+    ("problems", "🚨", "Жалобы", int(filtered_publications["msg_type"].eq("Жалоба").sum())),
+    ("thanks", "💚", "Благодарности", int(filtered_publications["msg_type"].eq("Благодарность").sum())),
+    ("questions", "❔", "Вопросы", int(filtered_publications["msg_type"].eq("Вопрос").sum())),
+    ("suggestions", "💡", "Предложения", int(filtered_publications["msg_type"].eq("Предложение").sum())),
+    ("information", "ℹ️", "Информация", int(filtered_publications["msg_type"].eq("Информация").sum())),
 ]
 if "message_filter" not in st.session_state or st.session_state["message_filter"] not in [x[0] for x in CATEGORY_CHOICES]:
     st.session_state["message_filter"] = "all"
 selected_filter = st.session_state["message_filter"]
 
-category_masks = {
-    "problems": f["is_problem"].eq(True),
-    "thanks": f["msg_type"].eq("Благодарность"),
-    "questions": f["msg_type"].eq("Вопрос"),
-    "suggestions": f["msg_type"].eq("Предложение"),
-    "information": f["msg_type"].eq("Информация"),
+category_types = {
+    "problems": "Жалоба",
+    "thanks": "Благодарность",
+    "questions": "Вопрос",
+    "suggestions": "Предложение",
+    "information": "Информация",
 }
-selected_messages = f if selected_filter == "all" else f[category_masks[selected_filter]]
-matched_ids = set(selected_messages["post_id"].dropna().astype(str))
+selected_publications = (
+    filtered_publications if selected_filter == "all"
+    else filtered_publications[filtered_publications["msg_type"].eq(category_types[selected_filter])]
+)
+matched_ids = set(selected_publications["post_id"].dropna().astype(str))
 posts = posts[posts["post_id"].astype(str).isin(matched_ids)].copy()
 
 
@@ -2233,7 +2376,7 @@ with left_col:
             label = (
                 f"{priority_labels[priority]}  ·  {work_label}\n\n"
                 f"{str(post['text'])}\n\n"
-                f"Threads  ·  💬 {count} комментариев"
+                f"{post.get('source', 'Источник')}  ·  💬 {count} комментариев"
             )
             if st.button(
                 label,
@@ -2263,29 +2406,47 @@ with right_col:
             ].copy()
 
             with st.container(border=True):
-                st.caption("Threads · Публикация")
+                st.caption(f"{post.get('source', 'Источник')} · Публикация")
                 st.write(post["text"])
 
                 url = str(post.get("url", "") or "").strip()
                 if url.startswith(("https://", "http://")):
                     st.link_button(
-                        "Открыть в Threads",
+                        f"Открыть в {post.get('source', 'источнике')}",
                         url,
                         use_container_width=True,
                     )
 
             st.markdown(f"**Комментарии ({len(post_comments)})**")
-
+            comment_labels = {
+                "Все": "Все комментарии",
+                "Жалобы": "Жалоба",
+                "Вопросы": "Вопрос",
+                "Предложения": "Предложение",
+                "Благодарности": "Благодарность",
+                "Информация": "Информация",
+            }
+            selected_comment_tab = st.segmented_control(
+                "Тип комментариев",
+                options=list(comment_labels),
+                default="Все",
+                key="comment_type_filter_tabs",
+                label_visibility="collapsed",
+            ) or "Все"
+            comment_type = comment_labels[selected_comment_tab]
+            shown_comments = (
+                post_comments if comment_type == "Все комментарии"
+                else post_comments[post_comments["msg_type"] == comment_type]
+            )
+            st.caption(f"Показано: {len(shown_comments)} из {len(post_comments)}")
             with st.container(border=False):
-                if post_comments.empty:
-                    st.info("Подходящих комментариев нет.")
+                if shown_comments.empty:
+                    st.info("Комментариев выбранного типа нет.")
                 else:
-                    for _, comment in post_comments.iterrows():
+                    for _, comment in shown_comments.iterrows():
                         with st.container(border=True):
                             st.write(comment["text"])
-                            st.caption(
-                                f"Тип: {comment.get('msg_type', 'Не определён')}"
-                            )
+                            st.caption(f"Тип: {comment.get('msg_type', 'Не определён')}")
         else:
             st.info("Выберите публикацию слева.")
 
