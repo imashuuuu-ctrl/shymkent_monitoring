@@ -5,3 +5,4 @@ requests
 folium
 streamlit-folium
 google-genai
+telethon>=1.36,<2
