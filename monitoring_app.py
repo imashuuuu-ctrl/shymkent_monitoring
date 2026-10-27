@@ -1764,6 +1764,69 @@ html, body, [data-testid="stAppViewContainer"], .stApp {
 </style>
 """, unsafe_allow_html=True)
 
+
+# Контрастная тема элементов, включая BaseWeb в Streamlit Cloud.
+st.markdown("""
+<style>
+/* Фон, подписи и текст навигации */
+[data-testid="stAppViewContainer"], [data-testid="stMain"] {color:#f5f3ff !important;}
+[data-testid="stHeader"] {background:#0d1028 !important;}
+[data-testid="stRadio"] label, [data-testid="stRadio"] label *,
+[data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] *,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stSidebar"] label, [data-testid="stSidebar"] label * {
+  color:#f5f3ff !important; opacity:1 !important;
+}
+/* Select, multiselect, календарь, ввод чисел, текст */
+[data-baseweb="select"] > div,
+[data-baseweb="select"] [class*="control"],
+[data-baseweb="input"] > div,
+[data-baseweb="base-input"],
+[data-baseweb="textarea"] > div,
+[data-testid="stDateInput"] [data-baseweb="input"] > div,
+[data-testid="stNumberInput"] [data-baseweb="input"] > div {
+  background-color:#1d1b3d !important;
+  border-color:#64528f !important;
+  color:#fff !important;
+}
+[data-baseweb="select"] input, [data-baseweb="select"] span,
+[data-baseweb="select"] [class*="singleValue"],
+[data-baseweb="select"] [class*="placeholder"],
+[data-baseweb="select"] svg,
+[data-baseweb="input"] input,
+[data-baseweb="textarea"] textarea,
+[data-testid="stDateInput"] input,
+[data-testid="stNumberInput"] input {
+  color:#f9f7ff !important; -webkit-text-fill-color:#f9f7ff !important;
+}
+[data-baseweb="select"] input::placeholder,
+[data-baseweb="input"] input::placeholder {color:#b8b1d2 !important;}
+/* Поля выбора даты и чисел: кнопки увеличения/уменьшения */
+[data-testid="stNumberInput"] button, [data-testid="stDateInput"] button {
+  background:#252149 !important; color:#fff !important; border-color:#64528f !important;
+}
+[data-testid="stNumberInput"] button svg, [data-testid="stDateInput"] button svg {fill:none !important; color:#fff !important;}
+/* Сегментированные переключатели комментариев */
+[data-testid="stSegmentedControl"] button,
+[data-testid="stSegmentedControl"] button p {
+  background:#201d40 !important; color:#f5f3ff !important;
+  border-color:#625487 !important; opacity:1 !important;
+}
+[data-testid="stSegmentedControl"] button[aria-pressed="true"],
+[data-testid="stSegmentedControl"] button[data-selected="true"] {
+  background:#5930c4 !important; color:white !important;
+}
+[data-testid="stSegmentedControl"] button:disabled {opacity:.55 !important;}
+/* Меню выбора и календарь */
+[data-baseweb="popover"], [data-baseweb="popover"] > div,
+[data-baseweb="menu"], [role="listbox"], [role="option"],
+[data-baseweb="calendar"] {background:#1d1b3d !important;color:#fff !important;}
+[role="option"] *, [data-baseweb="calendar"] * {color:#fff !important;}
+/* Вспомогательный текст */
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] * {color:#b7b0d2 !important;}
+</style>
+""", unsafe_allow_html=True)
+
 with st.sidebar:
     st.markdown("""
     <div style="padding:10px 2px 16px;border-bottom:1px solid #30415b;margin-bottom:16px;">
@@ -2086,16 +2149,12 @@ df = data.copy()
 
 # Отдельный раздел карты: обычный медиамониторинг остаётся без изменений.
 page_choice = st.radio(
-    "Раздел сайта", ["📋 Медиамониторинг", "🗺️ Карта проблем", "📊 Аналитика по районам", "🤖 ИИ-помощник"],
+    "Раздел сайта", ["📋 Медиамониторинг", "🗺️ Карта проблем", "🤖 ИИ-помощник"],
     horizontal=True, label_visibility="collapsed", key="main_section_selector",
 )
 if page_choice == "🗺️ Карта проблем":
     from shymkent_problem_map import render_problem_map
     render_problem_map(df)
-    st.stop()
-if page_choice == "📊 Аналитика по районам":
-    from shymkent_district_ai import render_districts
-    render_districts(df)
     st.stop()
 if page_choice == "🤖 ИИ-помощник":
     from shymkent_district_ai import render_assistant
