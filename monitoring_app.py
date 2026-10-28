@@ -1489,7 +1489,7 @@ def fetch_own_threads(token, since, until, max_pages, with_replies):
 
 
 
-@st.cache_data(ttl=300, max_entries=10, show_spinner="Загрузка Telegram…")
+@st.cache_data(ttl=90, max_entries=10, show_spinner="Загрузка Telegram…")
 def fetch_telegram_public_channels(api_id, api_hash, channels, post_limit=40, comments_limit=40):
     """Read public Telegram channels with a session from Secrets or local development."""
     import asyncio
@@ -1545,8 +1545,9 @@ def fetch_telegram_public_channels(api_id, api_hash, channels, post_limit=40, co
                                 comment_text = comment.message or ""
                                 if not comment_text.strip():
                                     continue
-                                sender = await comment.get_sender()
-                                author = getattr(sender, "username", None) or getattr(sender, "first_name", None) or "Участник Telegram"
+                                sender = getattr(comment, "sender", None)
+                                author = (getattr(sender, "username", None) or getattr(sender, "first_name", None)
+                                          or (f"Telegram ID {comment.sender_id}" if comment.sender_id else "Участник Telegram"))
                                 rows.append({
                                     "ID": f"tg:comment:{chat_id}:{post.id}:{comment.id}",
                                     "ID публикации": parent, "Дата": comment.date.isoformat(),
@@ -1708,7 +1709,7 @@ def config_value(name):
 
 def db_connection():
     import psycopg
-    return psycopg.connect(config_value("DATABASE_URL"), connect_timeout=10)
+    return psycopg.connect(config_value("DATABASE_URL"), connect_timeout=5)
 
 
 def password_hash(password, salt=None):
@@ -1753,6 +1754,7 @@ def authenticate(username, password):
     return None
 
 
+@st.cache_data(ttl=45, max_entries=2, show_spinner=False)
 def channels_list():
     with db_connection() as conn:
         with conn.cursor() as cur:
@@ -1779,6 +1781,8 @@ def admin_panel():
             if right.button("Удалить", key="delete_" + hashlib.sha256(channel.encode()).hexdigest()[:12]):
                 with db_connection() as conn:
                     conn.execute("DELETE FROM monitoring_channels WHERE url=%s", (channel,))
+                channels_list.clear()
+                fetch_telegram_public_channels.clear()
                 st.rerun()
         with st.form("add_channel"):
             new_channel = st.text_input("Ссылка публичного Telegram-канала", placeholder="https://t.me/shymkentonline")
@@ -1788,6 +1792,8 @@ def admin_panel():
                 else:
                     with db_connection() as conn:
                         conn.execute("INSERT INTO monitoring_channels(url) VALUES (%s) ON CONFLICT DO NOTHING", (new_channel.strip(),))
+                    channels_list.clear()
+                    fetch_telegram_public_channels.clear()
                     st.success("Канал добавлен")
                     st.rerun()
     with tab2:
