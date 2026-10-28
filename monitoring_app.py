@@ -1489,6 +1489,7 @@ def fetch_own_threads(token, since, until, max_pages, with_replies):
 
 
 
+@st.cache_data(ttl=300, show_spinner="Обновляем Telegram…", max_entries=12)
 def fetch_telegram_public_channels(api_id, api_hash, channels, post_limit=40, comments_limit=40):
     """Read public Telegram channels with a session from Secrets or local development."""
     import asyncio
@@ -1699,7 +1700,7 @@ def config_value(name):
 
 def db_connection():
     import psycopg
-    return psycopg.connect(config_value("DATABASE_URL"), connect_timeout=10)
+    return psycopg.connect(config_value("DATABASE_URL"), connect_timeout=5)
 
 
 def password_hash(password, salt=None):
@@ -1716,6 +1717,7 @@ def password_matches(password, stored):
         return False
 
 
+@st.cache_resource(show_spinner=False)
 def initialize_database():
     with db_connection() as conn:
         with conn.cursor() as cur:
@@ -1839,18 +1841,42 @@ except Exception as exc:
 if 'login_role' not in st.session_state:
     st.session_state.login_role = None
 if not st.session_state.login_role:
-    st.title("🔐 Вход в Shymkent Monitoring")
-    with st.form("login_form"):
-        login = st.text_input("Логин")
-        password = st.text_input("Пароль", type="password")
-        if st.form_submit_button("Войти", type="primary"):
-            role = authenticate(login.strip(), password)
-            if role:
-                st.session_state.login_role = role
-                st.session_state.login_name = login.strip()
-                st.rerun()
-            else:
-                st.error("Неверный логин или пароль")
+    st.markdown("""
+    <style>
+    section[data-testid="stSidebar"] {display:none !important}
+    [data-testid="stSidebarCollapsedControl"] {display:none !important}
+    .block-container {max-width: 1100px !important; padding-top: 6vh !important}
+    .login-hero {text-align:center;padding:22px 10px 26px}
+    .login-mark {display:inline-flex;align-items:center;justify-content:center;width:68px;height:68px;
+      border-radius:20px;background:linear-gradient(135deg,#8757ff,#4d2bc1);
+      font-size:31px;box-shadow:0 15px 50px #6936df55;margin-bottom:22px}
+    .login-title {font-size:clamp(28px,4vw,40px);font-weight:850;letter-spacing:-1.2px;color:#fff}
+    .login-sub {color:#a9a8ca;font-size:15px;margin-top:9px}
+    div[data-testid="stForm"] {background:linear-gradient(145deg,#1b2044,#111832) !important;
+      border:1px solid #47416e !important;border-radius:22px !important;
+      padding:30px !important;box-shadow:0 24px 70px #02041370}
+    div[data-testid="stForm"] button[kind="primary"] {width:100%;min-height:50px;
+      background:linear-gradient(100deg,#7b4bfa,#5631c8) !important}
+    </style>
+    <div class="login-hero">
+      <div class="login-mark">◈</div>
+      <div class="login-title">Shymkent Monitoring</div>
+      <div class="login-sub">Единая платформа мониторинга городских обращений</div>
+    </div>
+    """, unsafe_allow_html=True)
+    left, center, right = st.columns([1, 1.25, 1])
+    with center:
+      with st.form("login_form"):
+          login = st.text_input("Логин")
+          password = st.text_input("Пароль", type="password")
+          if st.form_submit_button("Войти", type="primary"):
+              role = authenticate(login.strip(), password)
+              if role:
+                  st.session_state.login_role = role
+                  st.session_state.login_name = login.strip()
+                  st.rerun()
+              else:
+                  st.error("Неверный логин или пароль")
     st.stop()
 
 # Проверяем актуальность роли и блокировку при каждом обновлении страницы.
@@ -2091,7 +2117,7 @@ if mode != "Файл Excel/CSV":
                 else:
                     tg_channels = [line.strip() for line in telegram_channels_text.splitlines() if line.strip()]
                     tg_df, tg_errors = fetch_telegram_public_channels(
-                        tg_id, tg_hash, tg_channels, int(telegram_post_limit), int(telegram_comments_limit)
+                        tg_id, tg_hash, tuple(tg_channels), int(telegram_post_limit), int(telegram_comments_limit)
                     )
                     st.session_state["telegram_df"] = tg_df
                     for err in tg_errors:
