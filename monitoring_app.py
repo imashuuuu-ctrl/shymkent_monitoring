@@ -872,7 +872,7 @@ def read_all(raw_bytes, name):
     return out
 
 
-@st.cache_data(show_spinner="Обработка данных...")
+@st.cache_data(ttl=900, max_entries=12, show_spinner="Обработка данных...")
 
 def prepare(raw, mapping):
 
@@ -1484,6 +1484,7 @@ def fetch_own_threads(token, since, until, max_pages, with_replies):
     "Ссылка": rep.get("permalink")
 })
 
+    http.close()
     return pd.DataFrame(rows), errors
 
 
@@ -1753,18 +1754,46 @@ def initialize_database():
 
 
 def save_monitoring_snapshot(source, frame):
-    """Store a bounded, JSON-serializable snapshot; never store API tokens."""
+    """Merge new records by stable message ID; retain older records and never erase on API failure.
+
+    Atomic DB row lock prevents concurrent visitors from overwriting each other's updates.
+    """
     import json
     if frame is None or frame.empty:
         return
-    payload = json.loads(frame.head(MAX_ROWS).to_json(orient="split", date_format="iso", force_ascii=False))
+    fresh = frame.copy()
+    if "ID" not in fresh.columns:
+        return
+    fresh["ID"] = fresh["ID"].astype(str)
+    fresh = fresh[fresh["ID"].str.strip().ne("")].drop_duplicates(subset=["ID"], keep="last")
+    if fresh.empty:
+        return
     with db_connection() as conn:
         with conn.cursor() as cur:
+            # Serialize updates for the same source without changing the table schema.
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("monitoring:" + source,))
+            cur.execute("SELECT payload FROM monitoring_snapshots WHERE source=%s FOR UPDATE", (source,))
+            record = cur.fetchone()
+            if record:
+                previous = record[0]
+                if isinstance(previous, str):
+                    previous = json.loads(previous)
+                old = pd.DataFrame(previous.get("data", []), columns=previous.get("columns", []))
+                if "ID" in old.columns:
+                    old["ID"] = old["ID"].astype(str)
+                    fresh = pd.concat([old, fresh], ignore_index=True)
+                    fresh = fresh.drop_duplicates(subset=["ID"], keep="last")
+            if "Дата" in fresh.columns:
+                fresh["_sort_date"] = pd.to_datetime(fresh["Дата"], errors="coerce", utc=True)
+                fresh = fresh.sort_values("_sort_date", ascending=False, na_position="last").drop(columns="_sort_date")
+            fresh = fresh.head(MAX_ROWS)
+            payload = json.loads(fresh.to_json(orient="split", date_format="iso", force_ascii=False))
             cur.execute("""INSERT INTO monitoring_snapshots(source, payload, updated_at)
                 VALUES (%s, %s::jsonb, NOW())
                 ON CONFLICT(source) DO UPDATE SET payload=EXCLUDED.payload, updated_at=NOW()""",
                 (source, json.dumps(payload, ensure_ascii=False)))
     load_monitoring_snapshot.clear()
+
 
 
 @st.cache_data(ttl=60, max_entries=4, show_spinner=False)
@@ -2159,6 +2188,7 @@ if mode != "Файл Excel/CSV":
                 st.session_state["threads_df"] = threads_df
                 try:
                     save_monitoring_snapshot("Threads", threads_df)
+                    st.session_state["threads_df"], _ = load_monitoring_snapshot("Threads")
                 except Exception as _exc:
                     st.warning(f"Не удалось сохранить Threads в Supabase: {_exc}")
                 for err in threads_errors:
@@ -2181,6 +2211,7 @@ if mode != "Файл Excel/CSV":
                     st.session_state["telegram_df"] = tg_df
                     try:
                         save_monitoring_snapshot("Telegram", tg_df)
+                        st.session_state["telegram_df"], _ = load_monitoring_snapshot("Telegram")
                     except Exception as _exc:
                         st.warning(f"Не удалось сохранить Telegram в Supabase: {_exc}")
                     for err in tg_errors:
