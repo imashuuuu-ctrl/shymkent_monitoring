@@ -2576,51 +2576,39 @@ div[class*="st-key-post_select_"] button p {
 
 st.markdown("""
 <style>
-@media (min-width: 900px) {
-  html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"] {
-    height: 100vh !important;
-    overflow: hidden !important;
-  }
-  section[data-testid="stMain"] { height: 100vh !important; overflow: hidden !important; }
-  section[data-testid="stMain"] > div[data-testid="stMainBlockContainer"] {
-    height: 100vh !important;
-    overflow: hidden !important;
-  }
-  div.st-key-category_scroll [data-testid="stVerticalScrollContainer"],
-  div.st-key-posts_scroll [data-testid="stVerticalScrollContainer"],
-  div.st-key-details_scroll [data-testid="stVerticalScrollContainer"] {
-    height: clamp(220px, calc(100vh - 350px), 900px) !important;
-    max-height: calc(100vh - 350px) !important;
-    overflow-y: auto !important;
-  }
-}
-@media (max-width: 899px) {
-  div.st-key-category_scroll [data-testid="stVerticalScrollContainer"],
-  div.st-key-posts_scroll [data-testid="stVerticalScrollContainer"],
-  div.st-key-details_scroll [data-testid="stVerticalScrollContainer"] {
-    max-height: 55vh !important;
-  }
+/* Dark Premium 3.0: readable labels and naturally scrollable layout. */
+[data-testid="stAppViewContainer"] { background: #0b1020; }
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span,
+[data-testid="stMain"] [data-testid="stWidgetLabel"] p,
+[data-testid="stMain"] .stCaption p { color: #cbd5ef !important; }
+[data-testid="stMain"] [data-testid="stVerticalBlockBorderWrapper"] { border-radius: 12px; }
+@media (max-width: 1000px) {
+  [data-testid="stMain"] .block-container { padding-left: 1rem; padding-right: 1rem; }
 }
 </style>
 """, unsafe_allow_html=True)
 
-category_col, left_col, right_col = st.columns([0.78, 1.65, 1.65], gap="small")
+# Dark Premium 3.0 — счётчики сверху, две удобные колонки снизу.
+st.markdown("#### Обращения по типам")
+metric_cols = st.columns(len(CATEGORY_CHOICES), gap="small")
+for metric_col, (category_key, category_icon, category_title, category_count) in zip(metric_cols, CATEGORY_CHOICES):
+    with metric_col:
+        if st.button(
+            f"{category_icon} {category_title}\n\n{category_count}",
+            key=f"category_{category_key}",
+            type="primary" if selected_filter == category_key else "secondary",
+            use_container_width=True,
+        ):
+            st.session_state["message_filter"] = category_key
+            st.rerun()
+
+left_col, right_col = st.columns([1.05, 1.35], gap="medium")
 
 if "selected_post_id" not in st.session_state:
     st.session_state["selected_post_id"] = None
 
-with category_col:
-    st.markdown("#### Категории")
-    with st.container(height=480, border=False, key="category_scroll"):
-        for category_key, category_icon, category_title, category_count in CATEGORY_CHOICES:
-            if st.button(
-                f"{category_icon} {category_title} · {category_count}",
-                key=f"category_{category_key}",
-                type="primary" if selected_filter == category_key else "secondary",
-                use_container_width=True,
-            ):
-                st.session_state["message_filter"] = category_key
-                st.rerun()
 with left_col:
     st.markdown("#### Публикации")
     section_posts = posts
@@ -2630,7 +2618,7 @@ with left_col:
         st.session_state["selected_post_id"] = visible_ids[0]
 
     st.caption(f"Найдено публикаций: {len(section_posts)}")
-    with st.container(height=480, border=False, key="posts_scroll"):
+    with st.container(height=620, border=False, key="posts_scroll"):
         if visible_posts.empty:
             st.info("В этом разделе публикаций нет.")
         for i, post in visible_posts.iterrows():
@@ -2660,8 +2648,8 @@ with left_col:
                 st.rerun()
 
 with right_col:
-    st.markdown("#### Публикация и комментарии")
-    with st.container(height=480, border=False, key="details_scroll"):
+    st.markdown("#### Детали публикации и комментарии")
+    with st.container(height=620, border=False, key="details_scroll"):
 
         selected_id = st.session_state["selected_post_id"]
 
@@ -2768,3 +2756,4 @@ with st.sidebar:
             file_name="медиамониторинг_Шымкент.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
