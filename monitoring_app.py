@@ -1570,6 +1570,116 @@ def fetch_telegram_public_channels(api_id, api_hash, channels, post_limit=40, co
         return pd.DataFrame(), [f"Telegram: {type(exc).__name__}: {exc}"]
 
 
+
+# Карта городских обращений: самостоятельный модуль без дополнительных файлов.
+import html
+import time
+from urllib.parse import urlparse
+
+CITY_CENTER = (42.3155, 69.5869)  # центр обзора, НЕ координаты обращений
+COLORS = {"Жалоба": "#f04d72", "Вопрос": "#4e9eff", "Предложение": "#f4b740", "Благодарность": "#29c7a0", "Информация": "#a78bfa"}
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def geocode_known_place(place):
+    """Ищет явно упомянутую локацию; не подменяет её центром города."""
+    import re
+    name = str(place).strip()
+    # Nominatim лучше находит названия без префиксов «мкр» и «район».
+    clean = re.sub(r"^(?:мкр\.?|микрорайон|район|проспект|ул\.?|улица)\s+", "", name, flags=re.I).strip()
+    queries = list(dict.fromkeys([
+        f"{clean}, Шымкент, Казахстан",
+        f"{clean}, Shymkent, Kazakhstan",
+        f"{name}, Shymkent, Kazakhstan",
+    ]))
+    for query in queries:
+        try:
+            response = requests.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": query, "format": "json", "limit": 3, "countrycodes": "kz"},
+                headers={"User-Agent": "ShymkentMediaMonitoring/1.1 (local community research)"},
+                timeout=12,
+            )
+            response.raise_for_status()
+            for item in response.json():
+                lat, lon = float(item["lat"]), float(item["lon"])
+                if 42.0 <= lat <= 42.65 and 69.1 <= lon <= 70.1:
+                    return (lat, lon)
+        except (requests.RequestException, ValueError, KeyError, IndexError):
+            pass
+        time.sleep(1.1)
+    return None
+
+
+def render_problem_map(df):
+    st.markdown("### 🗺️ Карта проблем Шымкента")
+    st.caption("Светлая интерактивная карта в стиле городского геопортала. Метки — по доступным геоданным OpenStreetMap, не точные адреса заявителей.")
+    try:
+        import folium
+        import streamlit.components.v1 as components
+    except ImportError:
+        st.warning("Для карты установите Folium: python -m pip install folium")
+        return
+
+    messages = df[df["record_type"].eq("Публикация")].copy()
+    # Для карты нужны обращения с определённым местом, а не любой текст.
+    messages = messages[messages["place"].notna() & ~messages["place"].astype(str).isin(["", "Местоположение не определено"])].copy()
+    source_values = sorted(messages["source"].dropna().astype(str).unique().tolist())
+    category_values = list(COLORS)
+    c1, c2 = st.columns(2)
+    with c1:
+        chosen_sources = st.multiselect("Источники на карте", source_values, default=source_values, key="map_sources")
+    with c2:
+        chosen_types = st.multiselect("Тип обращения", category_values, default=category_values, key="map_types")
+    messages = messages[messages["source"].astype(str).isin(chosen_sources) & messages["msg_type"].isin(chosen_types)]
+    if messages.empty:
+        st.info("Пока нет публикаций с распознанным местом для выбранных фильтров. В основном разделе публикации остаются доступными.")
+        st.caption("Если в тексте есть адрес, но поле «Место» не распознано, потребуется расширить словарь названий.")
+
+    # Геокодируем только явные распознанные места. Не ставим все сообщения в центр города.
+    places = list(dict.fromkeys(messages["place"].astype(str)))[:12]
+    if st.button("📍 Найти места на карте", key="map_geocode", type="primary"):
+        with st.spinner("Уточняем координаты мест через OpenStreetMap..."):
+            coords = dict(st.session_state.get("map_coords", {}))
+            for place in places:
+                if place not in coords:
+                    coords[place] = geocode_known_place(place)
+                    time.sleep(1.1)  # не чаще 1 запроса в секунду
+            st.session_state["map_coords"] = coords
+
+    coords = st.session_state.get("map_coords", {})
+    unresolved = [p for p in places if coords.get(p) is None]
+    if unresolved:
+        with st.expander(f"Места без координат ({len(unresolved)})"):
+            st.write("Не удалось найти точное положение через OpenStreetMap:")
+            st.write(", ".join(unresolved))
+            st.caption("Такие места не отмечаются случайной точкой. Можно уточнить название места в исходных данных.")
+    fmap = folium.Map(location=CITY_CENTER, zoom_start=11, tiles="OpenStreetMap", control_scale=True)
+    plotted = 0
+    for _, msg in messages.head(250).iterrows():
+        point = coords.get(str(msg["place"]))
+        if point is None:
+            continue
+        msg_type = str(msg["msg_type"])
+        snippet = html.escape(str(msg["text"])[:300])
+        place = html.escape(str(msg["place"]))
+        source = html.escape(str(msg["source"]))
+        raw_url = str(msg.get("url", "") or "")
+        parsed = urlparse(raw_url)
+        link = (f'<a href="{html.escape(raw_url, quote=True)}" target="_blank" rel="noopener noreferrer">Открыть публикацию</a>'
+                if parsed.scheme in ("http", "https") and parsed.netloc else "")
+        popup = folium.Popup(f'<div style="width:260px;font-family:Arial"><b>{html.escape(msg_type)}</b> · {source}<br><b>{place}</b><p>{snippet}</p>{link}</div>', max_width=310)
+        folium.CircleMarker(location=point, radius=7, color=COLORS.get(msg_type, "#a78bfa"),
+                            fill=True, fill_opacity=.83, weight=2, popup=popup,
+                            tooltip=f"{msg_type}: {place}").add_to(fmap)
+        plotted += 1
+    components.html(fmap.get_root().render(), height=620, scrolling=False)
+    st.caption(f"Показано меток: {plotted}. Публикации без подтверждённой геопозиции не размещаются на карте. "
+               "Метки могут совпадать, если обращения относятся к одному месту.")
+    missing = len(messages) - plotted
+    if missing > 0:
+        st.info(f"Без координат: {missing} публикаций. Нажмите «Найти места на карте»; если место не найдено, оно останется без метки.")
+
+
 st.set_page_config(page_title="Медиамониторинг города", layout="wide")
 
 st.markdown("<style>" + '\n/* Dark Premium refresh — presentation only */\n:root { color-scheme: dark; }\n.stApp { background: radial-gradient(ellipse at 80% -25%, #1b1b43 0%, transparent 52%), #0b1020 !important; color:#e8eafb !important; }\n.block-container { max-width: 1500px !important; padding-top: 1.3rem !important; }\nsection[data-testid="stSidebar"] { background: linear-gradient(180deg,#13172d 0%,#101628 100%) !important; border-right:1px solid #2b3051 !important; }\nsection[data-testid="stSidebar"] label,section[data-testid="stSidebar"] p,section[data-testid="stSidebar"] span { color:#e0e4f6 !important; }\nh1,h2,h3,h4 { color:#f5f4ff !important; letter-spacing:-.025em; }\n.stButton > button, .stDownloadButton > button { background:linear-gradient(130deg,#282653,#202846) !important; border:1px solid #494578 !important; color:#f4f1ff !important; border-radius:12px !important; min-height:42px; transition: border-color .15s ease, transform .15s ease; }\n.stButton > button:hover, .stDownloadButton > button:hover { border-color:#a997ff !important; transform:translateY(-1px); }\nbutton[kind="primary"] { background:linear-gradient(120deg,#6655c8,#8367d9) !important; border-color:#9b82ed !important; }\ndiv[data-testid="stExpander"],div[data-testid="stMetric"],div[data-testid="stForm"] { background:#151c32 !important; border:1px solid #313a5a !important; border-radius:14px !important; }\ndiv[data-testid="stMetric"] { padding:14px 16px !important; }\ndiv[data-testid="stMetricValue"] { color:#f7f5ff !important; }\ndiv[data-testid="stMetricLabel"] { color:#b8c0db !important; }\ndiv[data-baseweb="select"] > div,div[data-baseweb="input"] > div,textarea { background:#18213a !important; border-color:#354263 !important; color:#f5f6ff !important; border-radius:10px !important; }\n[data-testid="stDataFrame"], [data-testid="stTable"] { border:1px solid #313a5a; border-radius:12px; overflow:hidden; }\nhr { border-color:#303655 !important; }\na { color:#b5a8ff !important; }\n@media(max-width:760px){.block-container{padding-left:1rem !important;padding-right:1rem !important;}h1{font-size:1.7rem !important;}}\n' + "</style>", unsafe_allow_html=True)
@@ -2798,3 +2908,8 @@ with st.sidebar:
             file_name="медиамониторинг_Шымкент.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
+
+# Карта находится внизу страницы и использует уже отфильтрованные данные.
+st.divider()
+render_problem_map(f)
