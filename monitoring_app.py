@@ -1484,7 +1484,6 @@ def fetch_own_threads(token, since, until, max_pages, with_replies):
     "Ссылка": rep.get("permalink")
 })
 
-    http.close()
     return pd.DataFrame(rows), errors
 
 
