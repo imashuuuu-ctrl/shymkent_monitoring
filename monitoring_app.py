@@ -1571,114 +1571,71 @@ def fetch_telegram_public_channels(api_id, api_hash, channels, post_limit=40, co
 
 
 
-# Карта городских обращений: самостоятельный модуль без дополнительных файлов.
-import html
-import time
-from urllib.parse import urlparse
 
-CITY_CENTER = (42.3155, 69.5869)  # центр обзора, НЕ координаты обращений
-COLORS = {"Жалоба": "#f04d72", "Вопрос": "#4e9eff", "Предложение": "#f4b740", "Благодарность": "#29c7a0", "Информация": "#a78bfa"}
+# 3D-карта: движок MapLibre GL JS 5.24.0 из предоставленного архива.
+import base64 as _map_b64
+import zlib as _map_zlib
+import json as _map_json
+import html as _map_html
+from urllib.parse import urlparse as _map_urlparse
+import streamlit.components.v1 as _map_components
+from shymkent_3d_engine import get_map_assets as _get_map_assets
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def geocode_known_place(place):
-    """Ищет явно упомянутую локацию; не подменяет её центром города."""
-    import re
-    name = str(place).strip()
-    # Nominatim лучше находит названия без префиксов «мкр» и «район».
-    clean = re.sub(r"^(?:мкр\.?|микрорайон|район|проспект|ул\.?|улица)\s+", "", name, flags=re.I).strip()
-    queries = list(dict.fromkeys([
-        f"{clean}, Шымкент, Казахстан",
-        f"{clean}, Shymkent, Kazakhstan",
-        f"{name}, Shymkent, Kazakhstan",
-    ]))
-    for query in queries:
+def _map_geocode(place):
+    import time
+    import requests
+    clean = re.sub(r"^(?:мкр\.?|микрорайон|район|проспект|ул\.?|улица)\s+", "", str(place).strip(), flags=re.I)
+    for name in dict.fromkeys([clean, str(place).strip()]):
         try:
-            response = requests.get(
-                "https://nominatim.openstreetmap.org/search",
-                params={"q": query, "format": "json", "limit": 3, "countrycodes": "kz"},
-                headers={"User-Agent": "ShymkentMediaMonitoring/1.1 (local community research)"},
-                timeout=12,
-            )
-            response.raise_for_status()
-            for item in response.json():
-                lat, lon = float(item["lat"]), float(item["lon"])
+            res = requests.get('https://nominatim.openstreetmap.org/search',
+                params={'q': f'{name}, Шымкент, Казахстан', 'format':'json','limit':3,'countrycodes':'kz'},
+                headers={'User-Agent':'ShymkentMediaMonitoring/1.2 (map geocoding)'}, timeout=12)
+            res.raise_for_status()
+            for obj in res.json():
+                lat, lon = float(obj['lat']), float(obj['lon'])
                 if 42.0 <= lat <= 42.65 and 69.1 <= lon <= 70.1:
-                    return (lat, lon)
-        except (requests.RequestException, ValueError, KeyError, IndexError):
+                    return [lat,lon]
+        except (requests.RequestException, ValueError, KeyError):
             pass
         time.sleep(1.1)
     return None
 
-
-def render_problem_map(df):
-    st.markdown("### 🗺️ Карта проблем Шымкента")
-    st.caption("Светлая интерактивная карта в стиле городского геопортала. Метки — по доступным геоданным OpenStreetMap, не точные адреса заявителей.")
-    try:
-        import folium
-        import streamlit.components.v1 as components
-    except ImportError:
-        st.warning("Для карты установите Folium: python -m pip install folium")
-        return
-
-    messages = df[df["record_type"].eq("Публикация")].copy()
-    # Для карты нужны обращения с определённым местом, а не любой текст.
-    messages = messages[messages["place"].notna() & ~messages["place"].astype(str).isin(["", "Местоположение не определено"])].copy()
-    source_values = sorted(messages["source"].dropna().astype(str).unique().tolist())
-    category_values = list(COLORS)
-    c1, c2 = st.columns(2)
+def render_shymkent_3d(frame):
+    st.markdown('### 🏙️ 3D-карта обращений Шымкента')
+    st.caption('3D-здания на основе OpenStreetMap / OpenFreeMap. Метки отражают найденные места, а не точные координаты авторов.')
+    records=frame[frame['source'].isin(['Telegram','Threads'])].copy()
+    records=records[records['place'].notna() & ~records['place'].astype(str).isin(['','Местоположение не определено'])]
+    c1,c2=st.columns(2)
     with c1:
-        chosen_sources = st.multiselect("Источники на карте", source_values, default=source_values, key="map_sources")
+        sources=st.multiselect('Источники на 3D-карте',['Telegram','Threads'],default=['Telegram','Threads'],key='map3d_sources')
     with c2:
-        chosen_types = st.multiselect("Тип обращения", category_values, default=category_values, key="map_types")
-    messages = messages[messages["source"].astype(str).isin(chosen_sources) & messages["msg_type"].isin(chosen_types)]
-    if messages.empty:
-        st.info("Пока нет публикаций с распознанным местом для выбранных фильтров. В основном разделе публикации остаются доступными.")
-        st.caption("Если в тексте есть адрес, но поле «Место» не распознано, потребуется расширить словарь названий.")
-
-    # Геокодируем только явные распознанные места. Не ставим все сообщения в центр города.
-    places = list(dict.fromkeys(messages["place"].astype(str)))[:12]
-    if st.button("📍 Найти места на карте", key="map_geocode", type="primary"):
-        with st.spinner("Уточняем координаты мест через OpenStreetMap..."):
-            coords = dict(st.session_state.get("map_coords", {}))
+        types=st.multiselect('Типы сообщений на карте',['Жалоба','Вопрос','Предложение','Благодарность','Информация'],default=['Жалоба','Вопрос','Предложение','Благодарность','Информация'],key='map3d_types')
+    records=records[records['source'].isin(sources)&records['msg_type'].isin(types)]
+    places=list(dict.fromkeys(records['place'].astype(str)))[:15]
+    if st.button('📍 Определить места обращений',key='map3d_geocode',type='primary'):
+        coords=dict(st.session_state.get('map3d_coords',{}))
+        with st.spinner('Определяем места через OpenStreetMap…'):
             for place in places:
-                if place not in coords:
-                    coords[place] = geocode_known_place(place)
-                    time.sleep(1.1)  # не чаще 1 запроса в секунду
-            st.session_state["map_coords"] = coords
+                if place not in coords: coords[place]=_map_geocode(place)
+        st.session_state['map3d_coords']=coords
+    coords=st.session_state.get('map3d_coords',{})
+    points=[]
+    for _,r in records.head(350).iterrows():
+        loc=coords.get(str(r['place']))
+        if not loc: continue
+        url=str(r.get('url','') or '')
+        parsed=_map_urlparse(url)
+        if parsed.scheme not in ('http','https') or not parsed.netloc: url=''
+        points.append({'lat':loc[0],'lon':loc[1],'place':str(r['place']),
+            'text':str(r['text'])[:400],'source':str(r['source']), 'type':str(r['msg_type']),'url':url})
+    js,css=_get_map_assets()
+    page=MAP3D_HTML.replace('__JS__',js).replace('__CSS__',css).replace('__STYLE__',MAP3D_STYLE).replace('__RECORDS__',_map_json.dumps(points,ensure_ascii=False).replace('</','<\/'))
+    _map_components.html(page,height=620,scrolling=False)
+    st.caption(f'Метки: {len(points)}. Без геопозиции: {len(records)-len(points)}. Для новых мест нажмите «Определить места обращений».')
 
-    coords = st.session_state.get("map_coords", {})
-    unresolved = [p for p in places if coords.get(p) is None]
-    if unresolved:
-        with st.expander(f"Места без координат ({len(unresolved)})"):
-            st.write("Не удалось найти точное положение через OpenStreetMap:")
-            st.write(", ".join(unresolved))
-            st.caption("Такие места не отмечаются случайной точкой. Можно уточнить название места в исходных данных.")
-    fmap = folium.Map(location=CITY_CENTER, zoom_start=11, tiles="OpenStreetMap", control_scale=True)
-    plotted = 0
-    for _, msg in messages.head(250).iterrows():
-        point = coords.get(str(msg["place"]))
-        if point is None:
-            continue
-        msg_type = str(msg["msg_type"])
-        snippet = html.escape(str(msg["text"])[:300])
-        place = html.escape(str(msg["place"]))
-        source = html.escape(str(msg["source"]))
-        raw_url = str(msg.get("url", "") or "")
-        parsed = urlparse(raw_url)
-        link = (f'<a href="{html.escape(raw_url, quote=True)}" target="_blank" rel="noopener noreferrer">Открыть публикацию</a>'
-                if parsed.scheme in ("http", "https") and parsed.netloc else "")
-        popup = folium.Popup(f'<div style="width:260px;font-family:Arial"><b>{html.escape(msg_type)}</b> · {source}<br><b>{place}</b><p>{snippet}</p>{link}</div>', max_width=310)
-        folium.CircleMarker(location=point, radius=7, color=COLORS.get(msg_type, "#a78bfa"),
-                            fill=True, fill_opacity=.83, weight=2, popup=popup,
-                            tooltip=f"{msg_type}: {place}").add_to(fmap)
-        plotted += 1
-    components.html(fmap.get_root().render(), height=620, scrolling=False)
-    st.caption(f"Показано меток: {plotted}. Публикации без подтверждённой геопозиции не размещаются на карте. "
-               "Метки могут совпадать, если обращения относятся к одному месту.")
-    missing = len(messages) - plotted
-    if missing > 0:
-        st.info(f"Без координат: {missing} публикаций. Нажмите «Найти места на карте»; если место не найдено, оно останется без метки.")
-
+MAP3D_HTML = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>__CSS__</style><style>html,body{margin:0;background:#0b1020;color:#e9e8ff;font:14px system-ui}#map{height:610px;width:100%}.hint{position:absolute;z-index:5;top:12px;left:12px;background:#141b36e8;padding:10px 14px;border:1px solid #57488e;border-radius:12px;pointer-events:none}.maplibregl-popup-content{background:#151c36;color:#f2efff;border-radius:12px;max-width:320px}.maplibregl-popup-tip{border-top-color:#151c36!important}.maplibregl-popup-content a{color:#b6a6ff}.maplibregl-ctrl-group{background:#171e3c}.maplibregl-ctrl-group button{filter:invert(.7)}</style></head><body><div class="hint">🏙️ <b>Шымкент · 3D</b><div style="font-size:12px;opacity:.8">Вращайте карту, приближайте здания и нажимайте метки</div></div><div id="map"></div><script>__JS__</script><script>__STYLE__\nconst records=__RECORDS__;\nconst map=new maplibregl.Map({container:\'map\',style,center:[69.5869,42.3155],zoom:12.7,pitch:58,bearing:-16,antialias:true});\nmap.addControl(new maplibregl.NavigationControl({visualizePitch:true}),\'top-right\');\nconst colors={\'Жалоба\':\'#ff547e\',\'Вопрос\':\'#58a7ff\',\'Предложение\':\'#ffbf47\',\'Благодарность\':\'#29d6a2\',\'Информация\':\'#ad91ff\'};\nfor(const p of records){const el=document.createElement(\'div\');el.style.cssText=\'width:16px;height:16px;border:2px solid #fff;border-radius:50%;background:\'+(colors[p.type]||\'#ad91ff\')+\';box-shadow:0 0 0 5px #ffffff26,0 3px 12px #0009;cursor:pointer\';const content=document.createElement(\'div\');const head=document.createElement(\'b\');head.textContent=p.type+\' · \'+p.source;content.appendChild(head);const place=document.createElement(\'div\');place.textContent=p.place;place.style.margin=\'6px 0\';content.appendChild(place);const body=document.createElement(\'p\');body.textContent=p.text;content.appendChild(body);if(p.url && /^https?:\\/\\//.test(p.url)){const a=document.createElement(\'a\');a.href=p.url;a.target=\'_blank\';a.rel=\'noopener noreferrer\';a.textContent=\'Открыть публикацию\';content.appendChild(a)}new maplibregl.Marker({element:el}).setLngLat([p.lon,p.lat]).setPopup(new maplibregl.Popup({offset:20}).setDOMContent(content)).addTo(map)}\n</script></body></html>'
+MAP3D_STYLE = "const style={version:8,glyphs:'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',sources:{omt:{type:'vector',tiles:['https://tiles.openfreemap.org/planet/20260927_080001_pt/{z}/{x}/{y}.pbf'],maxzoom:14,attribution:'© OpenStreetMap · OpenFreeMap'}},layers:[\n{id:'bg',type:'background',paint:{'background-color':'#0e1830'}},\n{id:'land',type:'fill',source:'omt','source-layer':'landcover',paint:{'fill-color':'#182640','fill-opacity':.6}},\n{id:'park',type:'fill',source:'omt','source-layer':'park',paint:{'fill-color':'#183b37'}},\n{id:'water',type:'fill',source:'omt','source-layer':'water',paint:{'fill-color':'#245075'}},\n{id:'roads',type:'line',source:'omt','source-layer':'transportation',paint:{'line-color':'#50607f','line-width':['interpolate',['linear'],['zoom'],9,.3,16,2.8]}},\n{id:'buildings',type:'fill-extrusion',source:'omt','source-layer':'building',minzoom:13,paint:{'fill-extrusion-color':['interpolate',['linear'],['coalesce',['get','render_height'],6],0,'#373763',30,'#6c5baf',90,'#a78bfa'],'fill-extrusion-height':['coalesce',['get','render_height'],6],'fill-extrusion-base':['coalesce',['get','render_min_height'],0],'fill-extrusion-opacity':.92}},\n{id:'labels',type:'symbol',source:'omt','source-layer':'place',layout:{'text-field':['coalesce',['get','name:ru'],['get','name']],'text-font':['Noto Sans Regular'],'text-size':12},paint:{'text-color':'#cdd5fa','text-halo-color':'#0e1830','text-halo-width':1.5}}\n]};"
 
 st.set_page_config(page_title="Медиамониторинг города", layout="wide")
 
@@ -2910,6 +2867,4 @@ with st.sidebar:
         )
 
 
-# Карта находится внизу страницы и использует уже отфильтрованные данные.
-st.divider()
-render_problem_map(f)
+render_shymkent_3d(f)
