@@ -1682,6 +1682,201 @@ div[data-testid="stVerticalScrollContainer"], div[data-testid="stContainer"] { b
 </style>
 """, unsafe_allow_html=True)
 
+
+# --- Авторизация и управление источниками ---
+import hmac
+import secrets as secure_random
+import time
+from urllib.parse import urlparse
+
+
+def config_value(name):
+    try:
+        return str(st.secrets.get(name, "") or "")
+    except Exception:
+        return str(os.environ.get(name, "") or "")
+
+
+def db_connection():
+    import psycopg
+    return psycopg.connect(config_value("DATABASE_URL"), connect_timeout=10)
+
+
+def password_hash(password, salt=None):
+    salt = salt or secure_random.token_hex(16)
+    value = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 350000)
+    return salt + ":" + value.hex()
+
+
+def password_matches(password, stored):
+    try:
+        salt, _ = stored.split(":", 1)
+        return hmac.compare_digest(password_hash(password, salt), stored)
+    except (ValueError, TypeError):
+        return False
+
+
+def initialize_database():
+    with db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""CREATE TABLE IF NOT EXISTS monitoring_users (
+                username TEXT PRIMARY KEY, password_hash TEXT NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('admin','viewer')),
+                enabled BOOLEAN NOT NULL DEFAULT TRUE)""")
+            cur.execute("""CREATE TABLE IF NOT EXISTS monitoring_channels (
+                url TEXT PRIMARY KEY)""")
+            cur.execute("SELECT count(*) FROM monitoring_users WHERE role='admin'")
+            if cur.fetchone()[0] == 0:
+                username, password = config_value("ADMIN_USERNAME"), config_value("ADMIN_PASSWORD")
+                if not username or not password or len(password) < 12:
+                    raise RuntimeError("Задайте ADMIN_USERNAME и ADMIN_PASSWORD (минимум 12 символов) в Secrets")
+                cur.execute("INSERT INTO monitoring_users(username,password_hash,role) VALUES (%s,%s,'admin') ON CONFLICT DO NOTHING",
+                            (username, password_hash(password)))
+
+
+def authenticate(username, password):
+    with db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT password_hash,role FROM monitoring_users WHERE username=%s AND enabled=TRUE", (username,))
+            result = cur.fetchone()
+    if result and password_matches(password, result[0]):
+        return result[1]
+    return None
+
+
+def channels_list():
+    with db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT url FROM monitoring_channels ORDER BY url")
+            return [r[0] for r in cur.fetchall()]
+
+
+def valid_telegram_url(value):
+    parsed = urlparse(value.strip())
+    return (parsed.scheme == 'https' and parsed.hostname in ('t.me','www.t.me')
+            and bool(re.fullmatch(r'/[A-Za-z0-9_]{5,32}/?', parsed.path)))
+
+
+def admin_panel():
+    st.title("🛡️ Панель администратора")
+    tab1, tab2 = st.tabs(["Telegram-каналы", "Пользователи"])
+    with tab1:
+        st.caption("Ключи Telegram и Threads остаются в Streamlit Secrets. Здесь добавляются только публичные каналы.")
+        current = channels_list()
+        st.write("Подключённые каналы:", len(current))
+        for channel in current:
+            left, right = st.columns([5, 1])
+            left.write(channel)
+            if right.button("Удалить", key="delete_" + hashlib.sha256(channel.encode()).hexdigest()[:12]):
+                with db_connection() as conn:
+                    conn.execute("DELETE FROM monitoring_channels WHERE url=%s", (channel,))
+                st.rerun()
+        with st.form("add_channel"):
+            new_channel = st.text_input("Ссылка публичного Telegram-канала", placeholder="https://t.me/shymkentonline")
+            if st.form_submit_button("Добавить канал"):
+                if not valid_telegram_url(new_channel):
+                    st.error("Укажи публичный канал вида https://t.me/channelname")
+                else:
+                    with db_connection() as conn:
+                        conn.execute("INSERT INTO monitoring_channels(url) VALUES (%s) ON CONFLICT DO NOTHING", (new_channel.strip(),))
+                    st.success("Канал добавлен")
+                    st.rerun()
+    with tab2:
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT username,role,enabled FROM monitoring_users ORDER BY username")
+                users = cur.fetchall()
+        st.dataframe(pd.DataFrame(users, columns=["Логин", "Роль", "Активен"]), hide_index=True)
+        with st.form("new_user"):
+            username = st.text_input("Логин нового пользователя")
+            password = st.text_input("Временный пароль (минимум 12 символов)", type="password")
+            if st.form_submit_button("Создать пользователя"):
+                if not re.fullmatch(r'[A-Za-z0-9_.-]{3,40}', username) or len(password) < 12:
+                    st.error("Логин: 3–40 латинских символов/цифр; пароль: минимум 12 символов")
+                else:
+                    with db_connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("SELECT 1 FROM monitoring_users WHERE username=%s", (username,))
+                            exists = cur.fetchone()
+                            if not exists:
+                                cur.execute("INSERT INTO monitoring_users(username,password_hash,role) VALUES (%s,%s,'viewer')",
+                                            (username, password_hash(password)))
+                    if exists:
+                        st.error("Такой пользователь уже существует")
+                    else:
+                        st.success("Пользователь создан. Передай пароль безопасным способом.")
+                        st.rerun()
+        viewers = [u[0] for u in users if u[1] == 'viewer']
+        if viewers:
+            with st.form("manage_viewer"):
+                selected = st.selectbox("Управление пользователем", viewers)
+                action = st.selectbox("Действие", ["Заблокировать", "Разблокировать", "Сбросить пароль"])
+                new_password = st.text_input("Новый пароль (для сброса)", type="password")
+                if st.form_submit_button("Применить"):
+                    with db_connection() as conn:
+                        if action == "Сбросить пароль":
+                            if len(new_password) < 12:
+                                st.error("Минимум 12 символов")
+                                st.stop()
+                            conn.execute("UPDATE monitoring_users SET password_hash=%s WHERE username=%s AND role='viewer'",
+                                         (password_hash(new_password), selected))
+                        else:
+                            conn.execute("UPDATE monitoring_users SET enabled=%s WHERE username=%s AND role='viewer'",
+                                         (action == "Разблокировать", selected))
+                    st.success("Изменения сохранены")
+                    st.rerun()
+
+
+if not config_value("DATABASE_URL"):
+    st.error("Для входа настрой DATABASE_URL, ADMIN_USERNAME и ADMIN_PASSWORD в Streamlit Cloud → Secrets.")
+    st.stop()
+try:
+    initialize_database()
+except Exception as exc:
+    st.error("Не удалось подключить базу данных. Проверь DATABASE_URL и параметры администратора.")
+    st.stop()
+
+if 'login_role' not in st.session_state:
+    st.session_state.login_role = None
+if not st.session_state.login_role:
+    st.title("🔐 Вход в Shymkent Monitoring")
+    with st.form("login_form"):
+        login = st.text_input("Логин")
+        password = st.text_input("Пароль", type="password")
+        if st.form_submit_button("Войти", type="primary"):
+            role = authenticate(login.strip(), password)
+            if role:
+                st.session_state.login_role = role
+                st.session_state.login_name = login.strip()
+                st.rerun()
+            else:
+                st.error("Неверный логин или пароль")
+    st.stop()
+
+# Проверяем актуальность роли и блокировку при каждом обновлении страницы.
+with db_connection() as conn:
+    with conn.cursor() as cur:
+        cur.execute("SELECT role FROM monitoring_users WHERE username=%s AND enabled=TRUE",
+                    (st.session_state.get('login_name', ''),))
+        current_user = cur.fetchone()
+if not current_user or current_user[0] != st.session_state.login_role:
+    st.session_state.clear()
+    st.warning("Доступ изменён. Войдите снова.")
+    st.stop()
+
+with st.sidebar:
+    st.caption("Пользователь: " + st.session_state.get('login_name', ''))
+    if st.button("Выйти"):
+        st.session_state.clear()
+        st.rerun()
+    if st.session_state.login_role == 'admin':
+        show_admin = st.toggle("Панель администратора", value=False)
+    else:
+        show_admin = False
+if show_admin:
+    admin_panel()
+    st.stop()
+
 with st.sidebar:
     st.markdown("""
     <div style="padding:10px 2px 16px;border-bottom:1px solid #30415b;margin-bottom:16px;">
@@ -1697,13 +1892,9 @@ with st.sidebar:
         help="Можно просматривать отдельно Threads, Telegram или оба источника вместе."
     )
 
-    telegram_channels_text = "https://t.me/shymkentonline"
+    telegram_channels_text = "\n".join(channels_list())
     if source_choice in ("Telegram", "Все источники"):
-        telegram_channels_text = st.text_area(
-            "Публичные Telegram-каналы (по одному на строке)",
-            value="https://t.me/shymkentonline", height=90,
-            help="В Streamlit Cloud используется TELEGRAM_SESSION_STRING из Secrets; локально поддерживается файл сессии."
-        )
+        st.caption(f"Telegram-каналов подключено: {len(channels_list())}. Источники изменяет только администратор.")
     # Лимиты загрузки заданы внутри приложения, без дополнительных полей в панели.
     telegram_post_limit = 30
     telegram_comments_limit = 30
