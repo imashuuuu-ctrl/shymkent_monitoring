@@ -1489,7 +1489,7 @@ def fetch_own_threads(token, since, until, max_pages, with_replies):
 
 
 
-@st.cache_data(ttl=300, show_spinner="Обновляем Telegram…", max_entries=12)
+@st.cache_data(ttl=300, max_entries=10, show_spinner="Загрузка Telegram…")
 def fetch_telegram_public_channels(api_id, api_hash, channels, post_limit=40, comments_limit=40):
     """Read public Telegram channels with a session from Secrets or local development."""
     import asyncio
@@ -1570,6 +1570,14 @@ def fetch_telegram_public_channels(api_id, api_hash, channels, post_limit=40, co
 
 
 st.set_page_config(page_title="Медиамониторинг города", layout="wide")
+
+st.markdown("""
+<style>
+section[data-testid="stSidebar"] label, section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span { color: #e8e9fa !important; }
+section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p { color: #c8c7e8 !important; }
+</style>
+""", unsafe_allow_html=True)
 
 st.markdown("""
 <style>
@@ -1700,7 +1708,7 @@ def config_value(name):
 
 def db_connection():
     import psycopg
-    return psycopg.connect(config_value("DATABASE_URL"), connect_timeout=5)
+    return psycopg.connect(config_value("DATABASE_URL"), connect_timeout=10)
 
 
 def password_hash(password, salt=None):
@@ -1717,7 +1725,6 @@ def password_matches(password, stored):
         return False
 
 
-@st.cache_resource(show_spinner=False)
 def initialize_database():
     with db_connection() as conn:
         with conn.cursor() as cur:
@@ -1838,68 +1845,58 @@ except Exception as exc:
     st.error("Не удалось подключить базу данных. Проверь DATABASE_URL и параметры администратора.")
     st.stop()
 
-if 'login_role' not in st.session_state:
+# Публичный мониторинг: вход требуется только для управления источниками.
+if "login_role" not in st.session_state:
     st.session_state.login_role = None
-if not st.session_state.login_role:
-    st.markdown("""
-    <style>
-    section[data-testid="stSidebar"] {display:none !important}
-    [data-testid="stSidebarCollapsedControl"] {display:none !important}
-    .block-container {max-width: 1100px !important; padding-top: 6vh !important}
-    .login-hero {text-align:center;padding:22px 10px 26px}
-    .login-mark {display:inline-flex;align-items:center;justify-content:center;width:68px;height:68px;
-      border-radius:20px;background:linear-gradient(135deg,#8757ff,#4d2bc1);
-      font-size:31px;box-shadow:0 15px 50px #6936df55;margin-bottom:22px}
-    .login-title {font-size:clamp(28px,4vw,40px);font-weight:850;letter-spacing:-1.2px;color:#fff}
-    .login-sub {color:#a9a8ca;font-size:15px;margin-top:9px}
-    div[data-testid="stForm"] {background:linear-gradient(145deg,#1b2044,#111832) !important;
-      border:1px solid #47416e !important;border-radius:22px !important;
-      padding:30px !important;box-shadow:0 24px 70px #02041370}
-    div[data-testid="stForm"] button[kind="primary"] {width:100%;min-height:50px;
-      background:linear-gradient(100deg,#7b4bfa,#5631c8) !important}
-    </style>
-    <div class="login-hero">
-      <div class="login-mark">◈</div>
-      <div class="login-title">Shymkent Monitoring</div>
-      <div class="login-sub">Единая платформа мониторинга городских обращений</div>
-    </div>
-    """, unsafe_allow_html=True)
-    left, center, right = st.columns([1, 1.25, 1])
-    with center:
-      with st.form("login_form"):
-          login = st.text_input("Логин")
-          password = st.text_input("Пароль", type="password")
-          if st.form_submit_button("Войти", type="primary"):
-              role = authenticate(login.strip(), password)
-              if role:
-                  st.session_state.login_role = role
-                  st.session_state.login_name = login.strip()
-                  st.rerun()
-              else:
-                  st.error("Неверный логин или пароль")
-    st.stop()
 
-# Проверяем актуальность роли и блокировку при каждом обновлении страницы.
-with db_connection() as conn:
-    with conn.cursor() as cur:
-        cur.execute("SELECT role FROM monitoring_users WHERE username=%s AND enabled=TRUE",
-                    (st.session_state.get('login_name', ''),))
-        current_user = cur.fetchone()
-if not current_user or current_user[0] != st.session_state.login_role:
-    st.session_state.clear()
-    st.warning("Доступ изменён. Войдите снова.")
-    st.stop()
+if st.session_state.login_role == "admin":
+    # Проверяем роль на сервере, а не только наличие кнопки в интерфейсе.
+    with db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT role FROM monitoring_users WHERE username=%s AND enabled=TRUE",
+                        (st.session_state.get("login_name", ""),))
+            current_user = cur.fetchone()
+    if not current_user or current_user[0] != "admin":
+        st.session_state.login_role = None
+        st.session_state.pop("login_name", None)
+        st.rerun()
 
 with st.sidebar:
-    st.caption("Пользователь: " + st.session_state.get('login_name', ''))
-    if st.button("Выйти"):
-        st.session_state.clear()
-        st.rerun()
-    if st.session_state.login_role == 'admin':
-        show_admin = st.toggle("Панель администратора", value=False)
+    st.markdown("### ◈ Shymkent Monitoring")
+    if st.session_state.login_role == "admin":
+        st.caption("Режим администратора")
+        admin_section = st.radio("Раздел", ["Мониторинг", "Управление источниками"],
+                                 key="admin_section")
+        if st.button("Выйти из аккаунта", use_container_width=True):
+            st.session_state.login_role = None
+            st.session_state.pop("login_name", None)
+            st.rerun()
     else:
-        show_admin = False
-if show_admin:
+        admin_section = "Мониторинг"
+        if st.button("🔐 Вход администратора", use_container_width=True):
+            st.session_state.show_admin_login = True
+
+if st.session_state.get("show_admin_login") and st.session_state.login_role != "admin":
+    st.markdown("## Вход администратора")
+    st.caption("Мониторинг открыт всем. Авторизация нужна только для управления источниками.")
+    with st.form("admin_login_form"):
+        login = st.text_input("Логин")
+        password = st.text_input("Пароль", type="password")
+        if st.form_submit_button("Войти", type="primary"):
+            role = authenticate(login.strip(), password)
+            if role == "admin":
+                st.session_state.login_role = "admin"
+                st.session_state.login_name = login.strip()
+                st.session_state.show_admin_login = False
+                st.rerun()
+            else:
+                st.error("Неверный логин или пароль администратора")
+    if st.button("← Вернуться к мониторингу"):
+        st.session_state.show_admin_login = False
+        st.rerun()
+    st.stop()
+
+if admin_section == "Управление источниками":
     admin_panel()
     st.stop()
 
@@ -1920,7 +1917,7 @@ with st.sidebar:
 
     telegram_channels_text = "\n".join(channels_list())
     if source_choice in ("Telegram", "Все источники"):
-        st.caption(f"Telegram-каналов подключено: {len(channels_list())}. Источники изменяет только администратор.")
+        st.caption(f"Telegram-каналов подключено: {len(telegram_channels_text.splitlines()) if telegram_channels_text else 0}. Источники изменяет только администратор.")
     # Лимиты загрузки заданы внутри приложения, без дополнительных полей в панели.
     telegram_post_limit = 30
     telegram_comments_limit = 30
