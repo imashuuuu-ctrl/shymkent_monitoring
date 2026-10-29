@@ -1317,7 +1317,7 @@ def fetch_threads(token, queries, search_type, since, until, max_pages):
 
         params = {"q": q, "search_type": search_type, "fields": API_FIELDS,
 
-                  "limit": 100, "access_token": token}
+                  "limit": 100}
 
         if since:
 
@@ -1333,7 +1333,7 @@ def fetch_threads(token, queries, search_type, since, until, max_pages):
 
             try:
 
-                r = requests.get(url, params=params if pages == 0 else None, timeout=30)
+                r = requests.get(url, params=params if pages == 0 else None, headers={"Authorization": f"Bearer {token}"}, timeout=30)
 
             except requests.RequestException as e:
 
@@ -2068,7 +2068,7 @@ st.markdown("""
 with st.sidebar:
     st.caption("ИСТОЧНИКИ И ФИЛЬТРЫ")
 
-    mode = "Мои публикации (Threads API)"
+    mode = "Поиск по словам (Threads API)"
     source_choice = st.selectbox(
         "Источник данных", ["Threads", "Telegram", "Все источники"],
         help="Можно просматривать отдельно Threads, Telegram или оба источника вместе."
